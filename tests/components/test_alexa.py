@@ -19,9 +19,6 @@ calls = []
 
 NPR_NEWS_MP3_URL = "https://pd.npr.org/anon.npr-mp3/npr/news/newscast.mp3"
 
-# 2016-10-10T19:51:42+00:00
-STATIC_TIME = datetime.datetime.utcfromtimestamp(1476129102)
-
 
 @pytest.fixture
 def alexa_client(loop, hass, test_client):
@@ -39,24 +36,25 @@ def alexa_client(loop, hass, test_client):
             "flash_briefings": {
                 "weather": [
                     {"title": "Weekly forecast",
-                     "text": "This week it will be sunny.",
-                     "date": "2016-10-09T19:51:42.0Z"},
+                     "text": "This week it will be sunny."},
                     {"title": "Current conditions",
-                     "text": "Currently it is 80 degrees fahrenheit.",
-                     "date": STATIC_TIME}
+                     "text": "Currently it is 80 degrees fahrenheit."}
                 ],
                 "news_audio": {
                     "title": "NPR",
                     "audio": NPR_NEWS_MP3_URL,
                     "display_url": "https://npr.org",
-                    "date": STATIC_TIME,
                     "uid": "uuid"
                 }
             },
-            "intents": {
+        }
+    }))
+    assert loop.run_until_complete(async_setup_component(
+        hass, 'intent_script', {
+            'intent_script': {
                 "WhereAreWeIntent": {
                     "speech": {
-                        "type": "plaintext",
+                        "type": "plain",
                         "text":
                         """
                             {%- if is_state("device_tracker.paulus", "home")
@@ -75,20 +73,25 @@ def alexa_client(loop, hass, test_client):
                 },
                 "GetZodiacHoroscopeIntent": {
                     "speech": {
-                        "type": "plaintext",
+                        "type": "plain",
                         "text": "You told us your sign is {{ ZodiacSign }}.",
                     }
                 },
                 "AMAZON.PlaybackAction<object@MusicCreativeWork>": {
                     "speech": {
-                        "type": "plaintext",
+                        "type": "plain",
                         "text": "Playing {{ object_byArtist_name }}.",
                     }
                 },
                 "CallServiceIntent": {
                     "speech": {
-                        "type": "plaintext",
-                        "text": "Service called",
+                        "type": "plain",
+                        "text": "Service called for {{ ZodiacSign }}",
+                    },
+                    "card": {
+                        "type": "simple",
+                        "title": "Card title for {{ ZodiacSign }}",
+                        "content": "Card content: {{ ZodiacSign }}",
                     },
                     "action": {
                         "service": "test.alexa",
@@ -99,8 +102,7 @@ def alexa_client(loop, hass, test_client):
                     }
                 }
             }
-        }
-    }))
+        }))
     return loop.run_until_complete(test_client(hass.http.app))
 
 
@@ -322,6 +324,13 @@ def test_intent_request_calling_service(alexa_client):
     assert call.data.get("entity_id") == ["switch.test"]
     assert call.data.get("hello") == "virgo"
 
+    data = yield from req.json()
+    assert data['response']['card']['title'] == 'Card title for virgo'
+    assert data['response']['card']['content'] == 'Card content: virgo'
+    assert data['response']['outputSpeech']['type'] == 'PlainText'
+    assert data['response']['outputSpeech']['text'] == \
+        'Service called for virgo'
+
 
 @asyncio.coroutine
 def test_intent_session_ended_request(alexa_client):
@@ -436,16 +445,8 @@ def test_flash_briefing_date_from_str(alexa_client):
     req = yield from _flash_briefing_req(alexa_client, "weather")
     assert req.status == 200
     data = yield from req.json()
-    assert data[0].get(alexa.ATTR_UPDATE_DATE) == "2016-10-09T19:51:42.0Z"
-
-
-@asyncio.coroutine
-def test_flash_briefing_date_from_datetime(alexa_client):
-    """Test the response has a valid date from a datetime object."""
-    req = yield from _flash_briefing_req(alexa_client, "weather")
-    assert req.status == 200
-    data = yield from req.json()
-    assert data[1].get(alexa.ATTR_UPDATE_DATE) == '2016-10-10T19:51:42.0Z'
+    assert isinstance(datetime.datetime.strptime(data[0].get(
+        alexa.ATTR_UPDATE_DATE), alexa.DATE_FORMAT), datetime.datetime)
 
 
 @asyncio.coroutine
@@ -463,4 +464,8 @@ def test_flash_briefing_valid(alexa_client):
     req = yield from _flash_briefing_req(alexa_client, "news_audio")
     assert req.status == 200
     json = yield from req.json()
+    assert isinstance(datetime.datetime.strptime(json[0].get(
+        alexa.ATTR_UPDATE_DATE), alexa.DATE_FORMAT), datetime.datetime)
+    json[0].pop(alexa.ATTR_UPDATE_DATE)
+    data[0].pop(alexa.ATTR_UPDATE_DATE)
     assert json == data
